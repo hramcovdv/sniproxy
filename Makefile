@@ -1,5 +1,5 @@
-BINARY_VERSION=0.1.1
-BINARY_NAME=sniproxy
+BINARY_VERSION=1.0
+BINARY_NAME=gosniproxy
 
 build:
 	go build -o $(BINARY_NAME) -ldflags "-X main.version=${BINARY_VERSION}" main.go

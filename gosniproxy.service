@@ -1,0 +1,12 @@
+[Unit]
+Description=Go HTTPS SNI Proxy
+Documentation=https://www.agwa.name/blog/post/writing_an_sni_proxy_in_go
+After=network.target
+
+[Service]
+Type=simple
+Restart=always
+ExecStart=/usr/sbin/gosniproxy
+
+[Install]
+WantedBy=multi-user.target
