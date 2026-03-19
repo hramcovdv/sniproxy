@@ -31,12 +31,16 @@ func main() {
 		return
 	}
 
+	logger.Info("server started", "addr", listener.Addr())
+
 	for {
 		connection, err := listener.Accept()
 		if err != nil {
 			logger.Error("accept failed", "err", err)
 			continue
 		}
+
+		logger.Info("incoming connection", "remote_addr", connection.RemoteAddr(), "local_addr", connection.LocalAddr())
 
 		go handleConnection(connection)
 	}
