@@ -1,9 +1,9 @@
-FROM golang:1.25-alpine AS build
+FROM golang:1.26-alpine AS build
 WORKDIR /src/
 COPY . .
-RUN go mod download && go mod verify && go build -v -o gosniproxy main.go
+RUN go build -v -o gosniproxy main.go
 
-FROM alpine:3.22
+FROM alpine:3.23
 COPY --from=build /src/gosniproxy /bin/gosniproxy
 EXPOSE 443/tcp
 ENTRYPOINT ["/bin/gosniproxy"]

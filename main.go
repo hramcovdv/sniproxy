@@ -3,23 +3,38 @@ package main
 import (
 	"bytes"
 	"crypto/tls"
+	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
 )
 
+var (
+	errClientHelloPeeked = errors.New("client hello peeked")
+	logger               = slog.Default()
+
+	dialBackend = func(serverName string) (net.Conn, error) {
+		return net.DialTimeout(
+			"tcp",
+			net.JoinHostPort(serverName, "443"),
+			5*time.Second,
+		)
+	}
+)
+
 func main() {
 	listener, err := net.Listen("tcp", ":443")
 	if err != nil {
-		log.Fatal(err)
+		logger.Error("listen failed", "addr", ":443", "err", err)
+		return
 	}
 
 	for {
 		connection, err := listener.Accept()
 		if err != nil {
-			log.Println(err)
+			logger.Error("accept failed", "err", err)
 			continue
 		}
 
@@ -55,13 +70,15 @@ func readClientHello(reader io.Reader) (*tls.ClientHelloInfo, error) {
 	config := &tls.Config{
 		GetConfigForClient: func(clientHello *tls.ClientHelloInfo) (*tls.Config, error) {
 			*hello = *clientHello
-			return nil, nil
+			return nil, errClientHelloPeeked
 		},
 	}
 
 	conn := tls.Server(readOnlyConn{reader: reader}, config)
-	err := conn.Handshake()
-	if err != nil {
+	if err := conn.Handshake(); err != nil {
+		if errors.Is(err, errClientHelloPeeked) {
+			return hello, nil
+		}
 		return nil, err
 	}
 
@@ -73,49 +90,58 @@ func handleConnection(clientConn net.Conn) {
 
 	// Set initial read deadline
 	if err := clientConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		logger.Error("set initial read deadline failed", "remote_addr", clientConn.RemoteAddr(), "err", err)
 		return
 	}
 
 	hello, clientReader, err := peekClientHello(clientConn)
 	if err != nil {
+		logger.Error("peek client hello failed", "remote_addr", clientConn.RemoteAddr(), "err", err)
 		return
 	}
 
 	// Clear read deadline
 	if err := clientConn.SetReadDeadline(time.Time{}); err != nil {
+		logger.Error("clear read deadline failed", "remote_addr", clientConn.RemoteAddr(), "server_name", hello.ServerName, "err", err)
 		return
 	}
 
-	backendConn, err := net.DialTimeout(
-		"tcp",
-		net.JoinHostPort(hello.ServerName, "443"),
-		5*time.Second,
-	)
+	if hello.ServerName == "" {
+		logger.Error("missing server name in client hello", "remote_addr", clientConn.RemoteAddr())
+		return
+	}
+
+	backendConn, err := dialBackend(hello.ServerName)
 	if err != nil {
+		logger.Error("dial backend failed", "remote_addr", clientConn.RemoteAddr(), "server_name", hello.ServerName, "err", err)
 		return
 	}
 	defer backendConn.Close()
 
 	var wg sync.WaitGroup
-	wg.Add(2)
 
-	// Forward client to backend
-	go func() {
-		defer wg.Done()
-		io.Copy(clientConn, backendConn)
-		if tcpConn, ok := clientConn.(*net.TCPConn); ok {
-			tcpConn.CloseWrite()
+	wg.Go(func() {
+		if _, err := io.Copy(clientConn, backendConn); err != nil {
+			logger.Error("copy backend to client failed", "remote_addr", clientConn.RemoteAddr(), "server_name", hello.ServerName, "err", err)
 		}
-	}()
+		if tcpConn, ok := clientConn.(*net.TCPConn); ok {
+			if err := tcpConn.CloseWrite(); err != nil {
+				logger.Error("close client write failed", "remote_addr", clientConn.RemoteAddr(), "server_name", hello.ServerName, "err", err)
+			}
+		}
+	})
 
 	// Forward backend to client
-	go func() {
-		defer wg.Done()
-		io.Copy(backendConn, clientReader)
-		if tcpConn, ok := backendConn.(*net.TCPConn); ok {
-			tcpConn.CloseWrite()
+	wg.Go(func() {
+		if _, err := io.Copy(backendConn, clientReader); err != nil {
+			logger.Error("copy client to backend failed", "remote_addr", clientConn.RemoteAddr(), "server_name", hello.ServerName, "err", err)
 		}
-	}()
+		if tcpConn, ok := backendConn.(*net.TCPConn); ok {
+			if err := tcpConn.CloseWrite(); err != nil {
+				logger.Error("close backend write failed", "remote_addr", clientConn.RemoteAddr(), "server_name", hello.ServerName, "err", err)
+			}
+		}
+	})
 
 	wg.Wait()
 }

@@ -1,4 +1,4 @@
-BINARY_VERSION=1.0
+BINARY_VERSION=1.1
 BINARY_NAME=gosniproxy
 
 build:
@@ -6,6 +6,9 @@ build:
 
 run: build
 	./${BINARY_NAME}
+
+test:
+	go test -v ./...
 
 clean:
 	go clean
