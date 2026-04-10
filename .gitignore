@@ -1,0 +1,17 @@
+# Editor settings
+.vscode/
+
+# Go build artifacts
+*.exe
+*.test
+*.out
+coverage.html
+
+# Local binaries
+gosniproxy
+gosniproxy.exe
+sniproxy
+sniproxy.exe
+
+# Local Go cache used during sandboxed checks
+.gocache/

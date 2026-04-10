@@ -9,7 +9,6 @@ import (
 	"io"
 	"math/big"
 	"net"
-	"sync"
 	"testing"
 	"time"
 )
@@ -59,10 +58,9 @@ func TestHandleConnectionProxiesTLSStream(t *testing.T) {
 	}()
 
 	clientSide, proxySide := net.Pipe()
-	var proxyWG sync.WaitGroup
-	proxyWG.Add(1)
+	proxyDone := make(chan struct{})
 	go func() {
-		defer proxyWG.Done()
+		defer close(proxyDone)
 		handleConnection(proxySide)
 	}()
 
@@ -70,11 +68,11 @@ func TestHandleConnectionProxiesTLSStream(t *testing.T) {
 		ServerName:         "allowed.example",
 		InsecureSkipVerify: true,
 	})
-	defer tlsClient.Close()
 
 	if err := tlsClient.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatalf("set deadline: %v", err)
 	}
+	defer tlsClient.Close()
 
 	if _, err := tlsClient.Write([]byte("ping")); err != nil {
 		t.Fatalf("write via proxy: %v", err)
@@ -92,8 +90,10 @@ func TestHandleConnectionProxiesTLSStream(t *testing.T) {
 		t.Fatalf("backend failed: %v", err)
 	}
 
-	_ = tlsClient.Close()
-	proxyWG.Wait()
+	if err := tlsClient.Close(); err != nil {
+		t.Fatalf("close client: %v", err)
+	}
+	waitForProxy(t, proxyDone)
 }
 
 func TestHandleConnectionRejectsMissingSNI(t *testing.T) {
@@ -107,10 +107,9 @@ func TestHandleConnectionRejectsMissingSNI(t *testing.T) {
 	}()
 
 	clientSide, proxySide := net.Pipe()
-	var proxyWG sync.WaitGroup
-	proxyWG.Add(1)
+	proxyDone := make(chan struct{})
 	go func() {
-		defer proxyWG.Done()
+		defer close(proxyDone)
 		handleConnection(proxySide)
 	}()
 
@@ -123,13 +122,81 @@ func TestHandleConnectionRejectsMissingSNI(t *testing.T) {
 		t.Fatalf("set deadline: %v", err)
 	}
 
-	_, err := tlsClient.Write([]byte("ping"))
-	if err == nil {
-		t.Fatal("expected client write to fail without SNI")
+	if _, err := tlsClient.Write([]byte("ping")); err == nil {
+		t.Fatal("expected write without SNI to fail")
 	}
 
-	_ = tlsClient.Close()
-	proxyWG.Wait()
+	waitForProxy(t, proxyDone)
+}
+
+func TestReadClientHelloExtractsServerName(t *testing.T) {
+	clientSide, serverSide := net.Pipe()
+	defer clientSide.Close()
+	defer serverSide.Close()
+
+	clientDone := make(chan error, 1)
+	go func() {
+		tlsClient := tls.Client(clientSide, &tls.Config{
+			ServerName:         "company.example",
+			InsecureSkipVerify: true,
+		})
+		clientDone <- tlsClient.Handshake()
+	}()
+
+	hello, err := readClientHello(serverSide)
+	if err != nil {
+		t.Fatalf("read client hello: %v", err)
+	}
+	if hello.ServerName != "company.example" {
+		t.Fatalf("unexpected server name: %q", hello.ServerName)
+	}
+
+	_ = serverSide.Close()
+	<-clientDone
+}
+
+func TestPeekClientHelloRejectsPlainText(t *testing.T) {
+	_, _, err := peekClientHello(io.NopCloser(&limitedStringReader{s: "not a tls client hello"}))
+	if err == nil {
+		t.Fatal("expected plain text to be rejected")
+	}
+}
+
+func TestDefaultDialBackendRejectsInvalidListenAddress(t *testing.T) {
+	restoreListenAddress := listenAddress
+	defer func() {
+		listenAddress = restoreListenAddress
+	}()
+
+	listenAddress = "443"
+	if conn, err := dialBackend("example.com"); err == nil {
+		conn.Close()
+		t.Fatal("expected invalid listen address to fail")
+	}
+}
+
+func waitForProxy(t *testing.T, done <-chan struct{}) {
+	t.Helper()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("proxy did not stop")
+	}
+}
+
+type limitedStringReader struct {
+	s string
+}
+
+func (reader *limitedStringReader) Read(p []byte) (int, error) {
+	if reader.s == "" {
+		return 0, io.EOF
+	}
+
+	n := copy(p, reader.s)
+	reader.s = reader.s[n:]
+	return n, nil
 }
 
 func mustTestCertificate(t *testing.T) tls.Certificate {
