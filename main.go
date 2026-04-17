@@ -8,12 +8,14 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
 
 var (
 	listenAddress string
+	logLevel      string
 
 	logger = slog.Default()
 
@@ -29,12 +31,37 @@ var (
 	}
 )
 
+func configureLogger(levelName string) {
+	var level slog.Level
+	switch levelName {
+	// case "debug":
+	// 	level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	logOpts := &slog.HandlerOptions{
+		Level: level,
+	}
+
+	logger = slog.New(slog.NewTextHandler(os.Stdout, logOpts))
+	slog.SetDefault(logger)
+}
+
 func init() {
-	flag.StringVar(&listenAddress, "listen", ":443", "listen address")
+	flag.StringVar(&listenAddress, "listen", ":443", "Set listen address")
+	flag.StringVar(&logLevel, "log-level", "info", "Set loggin level (info, warn, error)")
 }
 
 func main() {
 	flag.Parse()
+	configureLogger(logLevel)
 
 	listener, err := net.Listen("tcp", listenAddress)
 	if err != nil {
@@ -59,7 +86,7 @@ func main() {
 func handleConnection(clientConn net.Conn) {
 	defer clientConn.Close()
 
-	connLogger := logger.With("remote_addr", clientConn.RemoteAddr(), "local_addr", clientConn.LocalAddr())
+	connLogger := logger.With("remote_addr", clientConn.RemoteAddr())
 	connLogger.Info("client connected")
 
 	if err := clientConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {

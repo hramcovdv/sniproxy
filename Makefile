@@ -1,4 +1,4 @@
-BINARY_VERSION=1.2
+BINARY_VERSION=1.2.1
 BINARY_NAME=gosniproxy
 
 build:
