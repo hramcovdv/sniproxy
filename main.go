@@ -16,6 +16,7 @@ import (
 var (
 	listenAddress string
 	logLevel      string
+	dialTimeout   time.Duration = 5 * time.Second
 
 	logger = slog.Default()
 
@@ -27,7 +28,7 @@ var (
 			return nil, err
 		}
 
-		return net.DialTimeout("tcp", net.JoinHostPort(serverName, port), time.Second*5)
+		return net.DialTimeout("tcp", net.JoinHostPort(serverName, port), dialTimeout)
 	}
 )
 
@@ -55,8 +56,9 @@ func configureLogger(levelName string) {
 }
 
 func init() {
-	flag.StringVar(&listenAddress, "listen", ":443", "Set listen address")
-	flag.StringVar(&logLevel, "log-level", "info", "Set loggin level (info, warn, error)")
+	flag.StringVar(&listenAddress, "listen", ":443", "Set listen address (default: :443)")
+	flag.StringVar(&logLevel, "log-level", "info", "Set logging level (info, warn, error)")
+	flag.DurationVar(&dialTimeout, "dial-timeout", 5*time.Second, "Set dial timeout (default: 5s)")
 }
 
 func main() {
@@ -89,7 +91,7 @@ func handleConnection(clientConn net.Conn) {
 	connLogger := logger.With("remote_addr", clientConn.RemoteAddr())
 	connLogger.Info("client connected")
 
-	if err := clientConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+	if err := clientConn.SetReadDeadline(time.Now().Add(dialTimeout)); err != nil {
 		connLogger.Error("set read deadline failed", "error", err)
 		return
 	}
