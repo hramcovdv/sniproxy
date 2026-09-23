@@ -35,8 +35,6 @@ var (
 func configureLogger(levelName string) {
 	var level slog.Level
 	switch levelName {
-	// case "debug":
-	// 	level = slog.LevelDebug
 	case "info":
 		level = slog.LevelInfo
 	case "warn":
